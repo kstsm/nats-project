@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16.4
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  nats:
+    image: nats:latest
+    command:  -js -m 8222  # Включаем JetStream и задаем порт для мониторинга
+    ports:
+      - "4222:4222"  # Порт для подключения клиентов NATS
+      - "8222:8222"  # Порт для веб-интерфейса мониторинга NATS
+    environment:
+      - NATS_JS=true  # Включаем JetStream
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
