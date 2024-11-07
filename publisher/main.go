@@ -9,28 +9,36 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/lib/pq"
 	"github.com/nats-io/nats.go"
+	"io"
 	"log"
 	"net/http"
 	"os/signal"
+	"strconv"
 	"syscall"
 )
+
+type Message struct {
+	ID   int    `json:"id"`
+	Data string `json:"data"`
+}
 
 type Handler struct {
 	nc *nats.Conn
 }
 
-func (h *Handler) getMessage(w http.ResponseWriter, r *http.Request) {
+func initNats() *nats.Conn {
+	nc, err := nats.Connect(nats.DefaultURL)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-}
-
-type MessageRequest struct {
-	Data string `json:"data"`
+	return nc
 }
 
 func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
 	const op = "publisher.publishMessage"
 
-	var req MessageRequest
+	var req Message
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		fmt.Errorf("%s: %w", op, err)
@@ -43,24 +51,57 @@ func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func initNats() *nats.Conn {
-	nc, err := nats.Connect(nats.DefaultURL)
+var storageMap = make(map[int]string)
+
+func getMessages() map[int]string {
+	var messages []Message
+
+	resp, err := http.Get("http://localhost:8001/messages")
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
 	}
 
-	return nc
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	json.Unmarshal(body, &messages)
+
+	for _, message := range messages {
+		storageMap[message.ID] = message.Data
+	}
+	return storageMap
+}
+
+func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
+	url := chi.URLParam(r, "id")
+	id, err := strconv.Atoi(url)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	fmt.Println("Сообщение под номером:", storageMap[id])
 }
 
 func main() {
+
+	nc := initNats()
+
 	handler := Handler{
-		nc: initNats(),
+		nc: nc,
 	}
+	fmt.Println(getMessages())
+
+	handler.nc.Subscribe("orders", func(m *nats.Msg) {
+		fmt.Printf("Received a message: %s\n", string(m.Data))
+
+	})
 
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 	router.Post("/publish", handler.publishMessage)
-	router.Get("/publish/{id}", handler.getMessage)
+	router.Get("/publish/{id}", handler.getMessageID)
 
 	srv := http.Server{
 		Addr:    ":8000",

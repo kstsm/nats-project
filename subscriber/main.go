@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/go-chi/chi/v5"
@@ -18,6 +19,11 @@ import (
 type Handler struct {
 	nc *nats.Conn
 	db *sql.DB
+}
+
+type Message struct {
+	ID   int    `json:"id"`
+	Data string `json:"data"`
 }
 
 func initPostgres() *sql.DB {
@@ -38,26 +44,38 @@ func initNats() *nats.Conn {
 	return nc
 }
 
-func storageMessageToDB(db *sql.DB, storageMap map[string]string) {
+func (h *Handler) GetAllMessage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application-json")
+	rows, err := h.db.Query("SELECT id, data FROM message")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
 
-	rows, _ := db.Query("SELECT id, data FROM message")
+	var messages []Message
 
 	for rows.Next() {
-		var id string
-		var data string
-
-		if err := rows.Scan(&id, &data); err != nil {
-			log.Fatal(err)
+		var msg Message
+		if err := rows.Scan(&msg.ID, &msg.Data); err != nil {
+			fmt.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
-
-		storageMap[id] = data
-
+		messages = append(messages, msg)
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
-	for id, name := range storageMap {
-		fmt.Printf("ID: %s, Data: %s\n", id, name)
+	jsonData, err := json.Marshal(messages)
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
-
+	w.Write(jsonData)
 }
 
 func saveMessageToDB(db *sql.DB, message string) error {
@@ -76,27 +94,28 @@ func saveMessageToDB(db *sql.DB, message string) error {
 }
 
 func main() {
-	handler := Handler{
-		nc: initNats(),
-		db: initPostgres(),
-	}
 
-	storageMap := make(map[string]string)
+	nc := initNats()
+	db := initPostgres()
+
+	handler := Handler{
+		nc: nc,
+		db: db,
+	}
 
 	handler.nc.Subscribe("orders", func(msg *nats.Msg) {
 
-		err := saveMessageToDB(handler.db, string(msg.Data))
+		err := saveMessageToDB(db, string(msg.Data))
 		if err != nil {
 			return
 		}
-		storageMessageToDB(handler.db, storageMap)
 
 		fmt.Printf("Получено сообщение: %s\n", string(msg.Data))
 
 	})
-
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
+	router.Get("/messages", handler.GetAllMessage)
 
 	srv := http.Server{
 		Addr:    ":8001",
