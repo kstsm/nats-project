@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"strconv"
 	"syscall"
 )
 
@@ -78,6 +79,32 @@ func (h *Handler) GetAllMessage(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonData)
 }
 
+func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application-json")
+
+	url := chi.URLParam(r, "id")
+	id, err := strconv.Atoi(url)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	var msg Message
+	err = h.db.QueryRow("SELECT id, data FROM message WHERE id = $1", id).Scan(&msg.ID, &msg.Data)
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Write(jsonData)
+}
+
 func saveMessageToDB(db *sql.DB, message string) error {
 	stmt, err := db.Prepare(`INSERT INTO message (data) VALUES ($1)`)
 	if err != nil {
@@ -116,6 +143,7 @@ func main() {
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 	router.Get("/messages", handler.GetAllMessage)
+	router.Get("/message/{id}", handler.getMessageID)
 
 	srv := http.Server{
 		Addr:    ":8001",

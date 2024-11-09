@@ -53,7 +53,16 @@ func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
 
 var storageMap = make(map[int]string)
 
-func getMessages() map[int]string {
+func cachedMessage(messages *[]Message) {
+
+	for _, message := range *messages {
+		storageMap[message.ID] = message.Data
+	}
+	fmt.Println("Cached:", storageMap)
+
+}
+
+func getMessages() (*[]Message, error) {
 	var messages []Message
 
 	resp, err := http.Get("http://localhost:8001/messages")
@@ -68,20 +77,43 @@ func getMessages() map[int]string {
 
 	json.Unmarshal(body, &messages)
 
-	for _, message := range messages {
-		storageMap[message.ID] = message.Data
-	}
-	return storageMap
+	return &messages, nil
 }
 
 func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
-	url := chi.URLParam(r, "id")
-	id, err := strconv.Atoi(url)
-	if err != nil {
-		fmt.Println(err)
+	idURL := chi.URLParam(r, "id")
+	id, _ := strconv.Atoi(idURL)
+	url := fmt.Sprintf("http://localhost:8001/message/%d", id)
+
+	fmt.Println("Выгрузка данных из кэша ID:", id, "Data:", storageMap[id])
+
+	value, exists := storageMap[id]
+
+	if !exists {
+		fmt.Println("Данные из кэша не удалось подгрузить", value)
+
+		resp, err := http.Get(url)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		var message Message
+		err = json.Unmarshal(body, &message)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		storageMap[message.ID] = message.Data
+		fmt.Printf("Подгрузка из БД ID: %d, Data: %s\n", message.ID, message.Data)
 	}
 
-	fmt.Println("Сообщение под номером:", storageMap[id])
+	fmt.Println("Кэш обновлен:", storageMap)
 }
 
 func main() {
@@ -91,11 +123,17 @@ func main() {
 	handler := Handler{
 		nc: nc,
 	}
-	fmt.Println(getMessages())
+
+	messages, err := getMessages()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	cachedMessage(messages)
 
 	handler.nc.Subscribe("orders", func(m *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
-
 	})
 
 	router := chi.NewRouter()
