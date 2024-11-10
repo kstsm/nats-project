@@ -47,9 +47,10 @@ func initNats() *nats.Conn {
 
 func (h *Handler) GetAllMessage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application-json")
+
 	rows, err := h.db.Query("SELECT id, data FROM message")
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(http.StatusInternalServerError)
 	}
 	defer rows.Close()
 
@@ -103,6 +104,7 @@ func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Write(jsonData)
+
 }
 
 func saveMessageToDB(db *sql.DB, message string) error {

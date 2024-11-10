@@ -49,17 +49,16 @@ func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
 		fmt.Errorf("%s: %w", op, err)
 		return
 	}
+
 }
 
 var storageMap = make(map[int]string)
 
 func cachedMessage(messages *[]Message) {
-
 	for _, message := range *messages {
 		storageMap[message.ID] = message.Data
 	}
-	fmt.Println("Cached:", storageMap)
-
+	fmt.Println("Кэш загрузился:", storageMap)
 }
 
 func getMessages() (*[]Message, error) {
@@ -75,21 +74,28 @@ func getMessages() (*[]Message, error) {
 		fmt.Println(err)
 	}
 
-	json.Unmarshal(body, &messages)
+	err = json.Unmarshal(body, &messages)
+	if err != nil {
+		return nil, err
+	}
 
 	return &messages, nil
 }
 
 func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 	idURL := chi.URLParam(r, "id")
-	id, _ := strconv.Atoi(idURL)
-	url := fmt.Sprintf("http://localhost:8001/message/%d", id)
-
-	fmt.Println("Выгрузка данных из кэша ID:", id, "Data:", storageMap[id])
+	id, err := strconv.Atoi(idURL)
+	if err != nil {
+		fmt.Println(err)
+	}
+	var message Message
 
 	value, exists := storageMap[id]
+	if exists {
+		fmt.Println("Выгрузка данных из кэша ID:", id, "Data:", storageMap[id])
 
-	if !exists {
+	} else {
+		url := fmt.Sprintf("http://localhost:8001/message/%d", id)
 		fmt.Println("Данные из кэша не удалось подгрузить", value)
 
 		resp, err := http.Get(url)
@@ -102,18 +108,16 @@ func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 			fmt.Println(err)
 		}
 
-		var message Message
 		err = json.Unmarshal(body, &message)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("Никаких данных из БД не пришло:", err)
 			return
 		}
 
-		storageMap[message.ID] = message.Data
 		fmt.Printf("Подгрузка из БД ID: %d, Data: %s\n", message.ID, message.Data)
+		storageMap[message.ID] = message.Data
+		fmt.Println("Кэш обновлен:", storageMap)
 	}
-
-	fmt.Println("Кэш обновлен:", storageMap)
 }
 
 func main() {
