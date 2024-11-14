@@ -104,22 +104,21 @@ func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Write(jsonData)
-
 }
 
-func saveMessageToDB(db *sql.DB, message string) error {
-	stmt, err := db.Prepare(`INSERT INTO message (data) VALUES ($1)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
+func saveMessageToDB(db *sql.DB, message string) (Message, error) {
+	var msg Message
 
-	_, err = stmt.Exec(message)
+	err := db.QueryRow(`INSERT INTO message (data) VALUES ($1) RETURNING id`, message).Scan(&msg.ID)
 	if err != nil {
-		return err
+		fmt.Println(err)
+	}
+	err = db.QueryRow(`SELECT data FROM message WHERE id = $1`, msg.ID).Scan(&msg.Data)
+	if err != nil {
+		fmt.Println(err)
 	}
 
-	return nil
+	return msg, err
 }
 
 func main() {
@@ -133,15 +132,25 @@ func main() {
 	}
 
 	handler.nc.Subscribe("orders", func(msg *nats.Msg) {
+		newMsg, err := saveMessageToDB(db, string(msg.Data))
+		if err != nil {
+			return
+		}
 
-		err := saveMessageToDB(db, string(msg.Data))
+		response := Message{newMsg.ID, newMsg.Data}
+		responseData, err := json.Marshal(response)
+		if err != nil {
+			log.Println("Ошибка сериализации:", err)
+			return
+		}
+		err = msg.Respond(responseData)
 		if err != nil {
 			return
 		}
 
 		fmt.Printf("Получено сообщение: %s\n", string(msg.Data))
-
 	})
+
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 	router.Get("/messages", handler.GetAllMessage)
@@ -169,5 +178,4 @@ func main() {
 	}
 
 	log.Println("final")
-
 }

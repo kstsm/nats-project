@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-playground/validator/v10"
 	_ "github.com/lib/pq"
 	"github.com/nats-io/nats.go"
 	"io"
@@ -19,7 +20,7 @@ import (
 
 type Message struct {
 	ID   int    `json:"id"`
-	Data string `json:"data"`
+	Data string `validate:"required"`
 }
 
 type Handler struct {
@@ -33,23 +34,6 @@ func initNats() *nats.Conn {
 	}
 
 	return nc
-}
-
-func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
-	const op = "publisher.publishMessage"
-
-	var req Message
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		fmt.Errorf("%s: %w", op, err)
-		return
-	}
-
-	if err := h.nc.Publish("orders", []byte(req.Data)); err != nil {
-		fmt.Errorf("%s: %w", op, err)
-		return
-	}
-
 }
 
 var storageMap = make(map[int]string)
@@ -113,15 +97,47 @@ func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 			fmt.Println("Никаких данных из БД не пришло:", err)
 			return
 		}
-
 		fmt.Printf("Подгрузка из БД ID: %d, Data: %s\n", message.ID, message.Data)
 		storageMap[message.ID] = message.Data
 		fmt.Println("Кэш обновлен:", storageMap)
 	}
 }
 
-func main() {
+func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
+	const op = "publisher.publishMessage"
 
+	var req Message
+
+	validate := validator.New()
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		fmt.Errorf("%s: %w", op, err)
+		return
+	}
+
+	err = validate.Struct(req)
+	if err != nil {
+		for _, err := range err.(validator.ValidationErrors) {
+			fmt.Printf("Ошибка в поле %s: %s\n", err.Field(), err.Tag())
+		}
+	} else {
+		fmt.Println("Все данные прошли валидацию!")
+		msg, err := h.nc.Request("orders", []byte(req.Data), nats.DefaultTimeout)
+		if err != nil {
+			log.Fatal("Ошибка запроса:", err)
+		}
+		var response Message
+		if err := json.Unmarshal(msg.Data, &response); err != nil {
+			log.Fatal("Ошибка десериализации:", err)
+		}
+
+		storageMap[response.ID] = response.Data
+		fmt.Println("Кэш обновлен:", storageMap)
+	}
+}
+
+func main() {
 	nc := initNats()
 
 	handler := Handler{
@@ -135,10 +151,6 @@ func main() {
 	}
 
 	cachedMessage(messages)
-
-	handler.nc.Subscribe("orders", func(m *nats.Msg) {
-		fmt.Printf("Received a message: %s\n", string(m.Data))
-	})
 
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
