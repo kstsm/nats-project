@@ -2,16 +2,17 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5"
 	_ "github.com/lib/pq"
 	"github.com/nats-io/nats.go"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
@@ -19,7 +20,7 @@ import (
 
 type Handler struct {
 	nc *nats.Conn
-	db *sql.DB
+	db *pgx.Conn
 }
 
 type Message struct {
@@ -27,10 +28,12 @@ type Message struct {
 	Data string `json:"data"`
 }
 
-func initPostgres() *sql.DB {
-	db, err := sql.Open("postgres", "user=admin_wb password=admin_wb dbname=message_db sslmode=disable")
+func initPostgres() *pgx.Conn {
+	// urlExample := "postgres://username:password@localhost:5432/database_name"
+	db, err := pgx.Connect(context.Background(), os.Getenv("postgres://admin:admin@localhost:5432/message_db"))
 	if err != nil {
-		log.Fatalf("Ошибка подключения к PostgreSQL: %v", err)
+		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
+		os.Exit(1)
 	}
 
 	return db
@@ -48,7 +51,7 @@ func initNats() *nats.Conn {
 func (h *Handler) GetAllMessage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application-json")
 
-	rows, err := h.db.Query("SELECT id, data FROM message")
+	rows, err := h.db.Query(context.Background(), "SELECT id, data FROM message")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
@@ -90,7 +93,7 @@ func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var msg Message
-	err = h.db.QueryRow("SELECT id, data FROM message WHERE id = $1", id).Scan(&msg.ID, &msg.Data)
+	err = h.db.QueryRow(context.Background(), "SELECT id, data FROM message WHERE id = $1", id).Scan(&msg.ID, &msg.Data)
 	if err != nil {
 		fmt.Println(err)
 		w.WriteHeader(http.StatusNotFound)
@@ -106,14 +109,14 @@ func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonData)
 }
 
-func saveMessageToDB(db *sql.DB, message string) (Message, error) {
+func saveMessageToDB(db *pgx.Conn, message string) (Message, error) {
 	var msg Message
 
-	err := db.QueryRow(`INSERT INTO message (data) VALUES ($1) RETURNING id`, message).Scan(&msg.ID)
+	err := db.QueryRow(context.Background(), `INSERT INTO message (data) VALUES ($1) RETURNING id`, message).Scan(&msg.ID)
 	if err != nil {
 		fmt.Println(err)
 	}
-	err = db.QueryRow(`SELECT data FROM message WHERE id = $1`, msg.ID).Scan(&msg.Data)
+	err = db.QueryRow(context.Background(), `SELECT data FROM message WHERE id = $1`, msg.ID).Scan(&msg.Data)
 	if err != nil {
 		fmt.Println(err)
 	}
