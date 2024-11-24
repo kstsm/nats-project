@@ -8,7 +8,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5"
-	_ "github.com/lib/pq"
 	"github.com/nats-io/nats.go"
 	"log"
 	"net/http"
@@ -29,8 +28,7 @@ type Message struct {
 }
 
 func initPostgres() *pgx.Conn {
-	// urlExample := "postgres://username:password@localhost:5432/database_name"
-	db, err := pgx.Connect(context.Background(), os.Getenv("postgres://admin:admin@localhost:5432/message_db"))
+	db, err := pgx.Connect(context.Background(), "postgres://admin:admin@localhost:5432/message_db")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
 		os.Exit(1)
@@ -83,7 +81,7 @@ func (h *Handler) GetAllMessage(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonData)
 }
 
-func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) getMessageByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application-json")
 
 	url := chi.URLParam(r, "id")
@@ -109,23 +107,21 @@ func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonData)
 }
 
-func saveMessageToDB(db *pgx.Conn, message string) (Message, error) {
+func saveMessageToDB(db *pgx.Conn, message Message) (Message, error) {
 	var msg Message
 
-	err := db.QueryRow(context.Background(), `INSERT INTO message (data) VALUES ($1) RETURNING id`, message).Scan(&msg.ID)
+	err := db.
+		QueryRow(context.Background(), `INSERT INTO message (data) VALUES ($1) RETURNING id, data`, message.Data).
+		Scan(&msg.ID, &msg.Data)
 	if err != nil {
 		fmt.Println(err)
-	}
-	err = db.QueryRow(context.Background(), `SELECT data FROM message WHERE id = $1`, msg.ID).Scan(&msg.Data)
-	if err != nil {
-		fmt.Println(err)
+		return Message{}, err
 	}
 
-	return msg, err
+	return msg, nil
 }
 
 func main() {
-
 	nc := initNats()
 	db := initPostgres()
 
@@ -135,18 +131,21 @@ func main() {
 	}
 
 	handler.nc.Subscribe("orders", func(msg *nats.Msg) {
-		newMsg, err := saveMessageToDB(db, string(msg.Data))
+		var data Message
+		_ = json.Unmarshal(msg.Data, &data)
+
+		message, err := saveMessageToDB(db, data)
 		if err != nil {
 			return
 		}
 
-		response := Message{newMsg.ID, newMsg.Data}
-		responseData, err := json.Marshal(response)
+		response, err := json.Marshal(message)
 		if err != nil {
 			log.Println("Ошибка сериализации:", err)
 			return
 		}
-		err = msg.Respond(responseData)
+
+		err = msg.Respond(response)
 		if err != nil {
 			return
 		}
@@ -157,7 +156,7 @@ func main() {
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 	router.Get("/messages", handler.GetAllMessage)
-	router.Get("/message/{id}", handler.getMessageID)
+	router.Get("/message/{id}", handler.getMessageByID)
 
 	srv := http.Server{
 		Addr:    ":8001",

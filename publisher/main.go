@@ -7,17 +7,19 @@ import (
 	"fmt"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-playground/validator/v10"
-	_ "github.com/lib/pq"
+	"github.com/gookit/slog"
+	"github.com/kstsm/nats-project/pablisher/configs"
 	"github.com/nats-io/nats.go"
 	"log"
-	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
 	"strconv"
 	"sync"
 	"syscall"
 )
+
+var cfg = configs.Config
 
 type Message struct {
 	ID   int    `json:"id"`
@@ -28,10 +30,17 @@ type Handler struct {
 	nc *nats.Conn
 }
 
+func setMessage(message Message) {
+	mu.Lock()
+	storageMap[message.ID] = message
+	mu.Unlock()
+}
+
 func initNats() *nats.Conn {
 	nc, err := nats.Connect(nats.DefaultURL)
 	if err != nil {
-		slog.Error("Не удалось подключиться к NATS", err)
+		slog.Fatal("Не удалось подключиться к NATS", err)
+		os.Exit(1)
 	}
 	slog.Info("Успешное подключение к NATS")
 
@@ -39,25 +48,25 @@ func initNats() *nats.Conn {
 }
 
 var (
-	storageMap = make(map[int]string)
-	mapMutex   sync.Mutex
-	mapRWMutex sync.RWMutex
+	storageMap = make(map[int]Message)
+	mu         = sync.Mutex{}
 )
 
-func cachedMessage(messages *[]Message) {
-	mapMutex.Lock()
-	for _, message := range *messages {
-		storageMap[message.ID] = message.Data
-		slog.Info("Загружено в кэш", "ID", message.ID, "Data", message.Data)
+func cacheMessages(messages []Message) {
+	mu.Lock()
+	for _, message := range messages {
+		storageMap[message.ID] = message
 	}
-	slog.Info("Кэш полностью загрузился", "Всего записей", len(storageMap))
-	mapMutex.Unlock()
+	mu.Unlock()
+	slog.Info("Кэш полностью загрузился", len(storageMap))
 }
 
-func getMessages() (*[]Message, error) {
+// TODO: gRPC
+func getMessages() ([]Message, error) {
 	var messages []Message
 
-	resp, err := http.Get("http://localhost:8001/messages")
+	// Перенести в конфиг ссылку
+	resp, err := http.Get(fmt.Sprintf("%s/messages", cfg.SubscriberAddr))
 	if err != nil {
 		slog.Error("Ошибка при выполнении GET-запроса", "url", "http://localhost:8001/messages", "error", err)
 		return nil, err
@@ -69,26 +78,24 @@ func getMessages() (*[]Message, error) {
 		return nil, err
 	}
 
-	slog.Info("GET-запрос успешно выполнен", "Количество сообщений получено", len(messages))
-	return &messages, nil
+	return messages, nil
 }
 
-func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
-	idURL := chi.URLParam(r, "id")
-	id, err := strconv.Atoi(idURL)
+func (h *Handler) getMessageByID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	messageID := chi.URLParam(r, "id")
+
+	id, err := strconv.Atoi(messageID)
 	if err != nil {
-		slog.Error("Ошибка конвертации строки в число", "Входящее", idURL, "error", err)
+		slog.Error("Ошибка конвертации строки в число", "Входящее", messageID, "error", err)
 		http.Error(w, "Недопустимый формат идентификатора", http.StatusBadRequest)
 		return
 	}
 
-	mapRWMutex.RLock()
 	data, exists := storageMap[id]
-	mapRWMutex.RUnlock()
-
 	if exists {
-		slog.Info("Данные найдены в кэше", "id", id, "data", data)
-		w.Write([]byte(fmt.Sprintf("Номер запроса: %d\nДанные из кэша: %s", id, data)))
+		json.NewEncoder(w).Encode(data)
 		return
 	}
 
@@ -99,7 +106,6 @@ func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Не удалось получить данные из базы данных", http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Неожиданный статус-код ответа", "url", url, "status", resp.StatusCode)
@@ -109,75 +115,63 @@ func (h *Handler) getMessageID(w http.ResponseWriter, r *http.Request) {
 
 	var message Message
 	if err = json.NewDecoder(resp.Body).Decode(&message); err != nil {
-		slog.Error("Ошибка при декодировании JSON!!!!", "url", url, "error", err)
+		slog.Error("Ошибка при декодировании JSON", "url", url, "error", err)
 		http.Error(w, "Не удалось выполнить декодирование ответа", http.StatusInternalServerError)
 		return
 	}
 
-	mapRWMutex.Lock()
-	storageMap[message.ID] = message.Data
-	mapRWMutex.Unlock()
+	setMessage(message)
+
+	response, err := json.Marshal(message)
+	if err != nil {
+		slog.Error("getMessageByID: json.Marshal")
+		http.Error(w, "Не удалось выполнить декодирование ответа", http.StatusInternalServerError)
+		return
+	}
 
 	slog.Info("Данные успешно загружены и добавлены в кэш", "id", message.ID, "data", message.Data)
-	w.Write([]byte(fmt.Sprintf("Данные загружены из базы данных:\nНомер запроса: %d\nДанные из кэша: %s", message.ID, message.Data)))
+	w.Write(response)
 }
 
 func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
-	const op = "publisher.publishMessage"
-	var req Message
+	w.Header().Set("Content-Type", "application/json")
 
-	defer r.Body.Close()
+	var request Message
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		slog.Error("Ошибка декодирования JSON", "error", err)
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	message, err := validateMessage(req)
+	data, err := json.Marshal(request)
 	if err != nil {
-		slog.Error("Ошибка валидации", "message", req, "error", err)
-		http.Error(w, "Ошибка валидации", http.StatusBadRequest)
+		slog.Error("getMessageByID: json.Marshal")
+		http.Error(w, "Не удалось выполнить декодирование ответа", http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("Данные успешно прошли валидацию", "message", message.Data)
-
-	msg, err := h.nc.Request("orders", []byte(message.Data), nats.DefaultTimeout)
+	msg, err := h.nc.Request("orders", data, nats.DefaultTimeout)
 	if err != nil {
-		slog.Error("Ошибка при запросе NATS", "message", message)
+		slog.Error("Ошибка при запросе NATS", data)
 		http.Error(w, "Не удалось получить сообщение", http.StatusInternalServerError)
 		return
 	}
 
-	var response Message
-	if err := json.Unmarshal(msg.Data, &response); err != nil {
+	var message Message
+	if err := json.Unmarshal(msg.Data, &message); err != nil {
 		slog.Error("Ошибка декодирования ответа NATS", "error", err)
 		http.Error(w, "Не удалось декодировать ответ", http.StatusInternalServerError)
 		return
 	}
 
-	mapRWMutex.Lock()
-	defer mapRWMutex.Unlock()
-	storageMap[response.ID] = response.Data
-	slog.Info("Кэш успешно обновлён", "id", response.ID, "data", response.Data)
+	setMessage(message)
+	slog.Info("Кэш успешно обновлён", "id", message.ID, "data", message.Data)
+
+	response := msg.Data
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Сообщение успешно обработано"))
-}
-
-func validateMessage(req Message) (Message, error) {
-	validate := validator.New()
-
-	err := validate.Struct(req)
-	if err != nil {
-		for _, err := range err.(validator.ValidationErrors) {
-			fmt.Printf("Ошибка в поле %s: %s\n", err.Field(), err.Tag())
-		}
-		return Message{}, err
-	}
-
-	return req, nil
+	w.Write(response)
 }
 
 func main() {
@@ -193,12 +187,12 @@ func main() {
 		return
 	}
 
-	cachedMessage(messages)
+	cacheMessages(messages)
 
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 	router.Post("/publish", handler.publishMessage)
-	router.Get("/publish/{id}", handler.getMessageID)
+	router.Get("/publish/{id}", handler.getMessageByID)
 
 	srv := http.Server{
 		Addr:    ":8000",
