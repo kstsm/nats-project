@@ -11,8 +11,8 @@ import (
 
 var cfg = configs.Config
 
-func GetMessages() ([]models.Message, error) {
-	var messages []models.Message
+func GetMessages() ([]models.Order, error) {
+	var messages []models.Order
 
 	resp, err := http.Get(fmt.Sprintf("%s/messages", cfg.SubscriberAddr))
 	if err != nil {

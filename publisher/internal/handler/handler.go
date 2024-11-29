@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/gookit/slog"
 	"github.com/kstsm/nats-project/pablisher/cache"
 	"github.com/kstsm/nats-project/pablisher/internal/models"
 	"github.com/nats-io/nats.go"
 	"net/http"
-	"strconv"
 )
 
 type Handler struct {
@@ -34,11 +34,11 @@ func NewHandler(nc *nats.Conn) *Handler {
 func (h *Handler) getMessageByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	messageID := chi.URLParam(r, "id")
+	req := chi.URLParam(r, "id")
 
-	id, err := strconv.Atoi(messageID)
+	id, err := uuid.Parse(req)
 	if err != nil {
-		slog.Error("Ошибка конвертации строки в число", "Входящее", messageID, "error", err)
+		slog.Error("Ошибка конвертации строки в UUID", err)
 		http.Error(w, "Недопустимый формат идентификатора", http.StatusBadRequest)
 		return
 	}
@@ -63,7 +63,7 @@ func (h *Handler) getMessageByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var message models.Message
+	var message models.Order
 	if err = json.NewDecoder(resp.Body).Decode(&message); err != nil {
 		slog.Error("Ошибка при декодировании JSON", "url", url, "error", err)
 		http.Error(w, "Не удалось выполнить декодирование ответа", http.StatusInternalServerError)
@@ -79,14 +79,14 @@ func (h *Handler) getMessageByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Данные успешно загружены и добавлены в кэш", "id", message.ID, "data", message.Data)
+	slog.Info("Данные успешно загружены и добавлены в кэш", "id", message.OrderUID, "data", message)
 	w.Write(response)
 }
 
 func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var request models.Message
+	var request models.Order
 
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		slog.Error("Ошибка декодирования JSON", "error", err)
@@ -108,7 +108,7 @@ func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var message models.Message
+	var message models.Order
 	if err := json.Unmarshal(msg.Data, &message); err != nil {
 		slog.Error("Ошибка декодирования ответа NATS", "error", err)
 		http.Error(w, "Не удалось декодировать ответ", http.StatusInternalServerError)
@@ -116,7 +116,7 @@ func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cache.SetMessage(message)
-	slog.Info("Кэш успешно обновлён", "id", message.ID, "data", message.Data)
+	slog.Info("Кэш успешно обновлён", "id", message.OrderUID, "data", message)
 
 	response := msg.Data
 

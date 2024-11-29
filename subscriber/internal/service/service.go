@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/gookit/slog"
 	"github.com/jackc/pgx/v5"
 	"github.com/kstsm/nats-projetn/subscriber/internal/models"
 	"github.com/kstsm/nats-projetn/subscriber/internal/repository"
@@ -12,8 +13,12 @@ import (
 
 func SubscribeOrders(db *pgx.Conn, nc *nats.Conn) {
 	nc.Subscribe("orders", func(msg *nats.Msg) {
-		var data models.Message
-		_ = json.Unmarshal(msg.Data, &data)
+		var data models.Order
+
+		err := json.Unmarshal(msg.Data, &data)
+		if err != nil {
+			slog.Error("Unmarshal", err)
+		}
 
 		message, err := repository.SaveMessageToDB(db, data)
 		if err != nil {
