@@ -6,11 +6,12 @@ import (
 )
 
 type Order struct {
-	OrderUID          uuid.UUID `json:"id"`
+	OrderUID          uuid.UUID `json:"order_uid"`
 	TrackNumber       string    `json:"track_number,"`
 	Entry             string    `json:"entry"`
 	Delivery          Delivery  `json:"delivery"`
 	Payment           Payment   `json:"payment"`
+	Items             []Items   `json:"items"`
 	Locale            string    `json:"locale"`
 	InternalSignature string    `json:"internal_signature"`
 	CustomerID        string    `json:"customer_id"`
@@ -32,15 +33,27 @@ type Delivery struct {
 }
 
 type Payment struct {
-	ID           int       `json:"id"`            // Уникальный идентификатор платежа
-	Transaction  string    `json:"transaction"`   // Идентификатор транзакции
-	RequestID    string    `json:"request_id"`    // Идентификатор запроса (может быть пустым)
-	Currency     string    `json:"currency"`      // Валюта платежа
-	Provider     string    `json:"provider"`      // Платежный провайдер
-	Amount       float64   `json:"amount"`        // Сумма платежа
-	PaymentDT    time.Time `json:"payment_dt"`    // Дата и время платежа
-	Bank         string    `json:"bank"`          // Банк
-	DeliveryCost int       `json:"delivery_cost"` // Стоимость доставки
-	GoodsTotal   int       `json:"goods_total"`   // Общая стоимость товаров
-	CustomFee    int       `json:"custom_fee"`    // Таможенные сборы
+	Transaction  string    `json:"transaction"`
+	Currency     string    `json:"currency"`
+	Provider     string    `json:"provider"`
+	Amount       float64   `json:"amount"`
+	PaymentDT    time.Time `json:"payment_dt"`
+	Bank         string    `json:"bank"`
+	DeliveryCost float64   `json:"delivery_cost"`
+	GoodsTotal   float64   `json:"goods_total"`
+	CustomFee    float64   `json:"custom_fee"`
+}
+
+type Items struct {
+	ChrtID      int     `json:"chrt_id"`
+	TrackNumber string  `json:"track_number"`
+	Price       float64 `json:"price"`
+	RID         string  `json:"rid"`
+	Name        string  `json:"name"`
+	Sale        int     `json:"sale"`
+	Size        string  `json:"size"`
+	TotalPrice  float64 `json:"total_price"`
+	NMID        int     `json:"nm_id"`
+	Brand       string  `json:"brand"`
+	Status      int     `json:"status"`
 }

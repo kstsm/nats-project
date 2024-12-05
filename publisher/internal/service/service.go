@@ -11,8 +11,8 @@ import (
 
 var cfg = configs.Config
 
-func GetMessages() ([]models.Order, error) {
-	var messages []models.Order
+func GetOrders() ([]models.Order, error) {
+	var orders []models.Order
 
 	resp, err := http.Get(fmt.Sprintf("%s/messages", cfg.SubscriberAddr))
 	if err != nil {
@@ -20,11 +20,11 @@ func GetMessages() ([]models.Order, error) {
 		return nil, err
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&messages)
+	err = json.NewDecoder(resp.Body).Decode(&orders)
 	if err != nil {
 		slog.Error("Ошибка при декодировании JSON", "error", err)
 		return nil, err
 	}
 
-	return messages, nil
+	return orders, nil
 }

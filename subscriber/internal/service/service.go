@@ -22,6 +22,7 @@ func SubscribeOrders(db *pgx.Conn, nc *nats.Conn) {
 
 		message, err := repository.SaveMessageToDB(db, data)
 		if err != nil {
+			slog.Error("Ошибка!", err)
 			return
 		}
 

@@ -30,13 +30,13 @@ func Run() {
 
 	router := handler.NewHandler(nc)
 
-	messages, err := service.GetMessages()
+	messages, err := service.GetOrders()
 	if err != nil {
 		slog.Error("Ошибка при получении сообщений", "error", err)
 		return
 	}
 
-	cache.StorageMessages(messages)
+	cache.StorageOrders(messages)
 
 	srv := http.Server{
 		Addr:    ":8000",

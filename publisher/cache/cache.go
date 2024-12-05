@@ -12,17 +12,17 @@ var (
 	mu         = sync.Mutex{}
 )
 
-func StorageMessages(messages []models.Order) {
+func StorageOrders(orders []models.Order) {
 	mu.Lock()
-	for _, message := range messages {
-		StorageMap[message.OrderUID] = message
+	for _, order := range orders {
+		StorageMap[order.OrderUID] = order
 	}
 	mu.Unlock()
 	slog.Info("Кэш полностью загрузился", len(StorageMap))
 }
 
-func SetMessage(message models.Order) {
+func SetOrder(order models.Order) {
 	mu.Lock()
-	StorageMap[message.OrderUID] = message
+	StorageMap[order.OrderUID] = order
 	mu.Unlock()
 }

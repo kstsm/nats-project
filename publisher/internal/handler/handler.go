@@ -25,13 +25,53 @@ func NewHandler(nc *nats.Conn) *Handler {
 	}
 
 	h.Router.Use(middleware.Logger)
-	h.Router.Post("/publish", h.publishMessage)
-	h.Router.Get("/publish/{id}", h.getMessageByID)
+	h.Router.Post("/publish", h.saveOrder)
+	h.Router.Get("/publish/{id}", h.getOrderByID)
 
 	return h
 }
 
-func (h *Handler) getMessageByID(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) saveOrder(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var request models.Order
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		slog.Error("Ошибка декодирования JSON", "error", err)
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	data, err := json.Marshal(request)
+	if err != nil {
+		slog.Error("getOrderByID: json.Marshal")
+		http.Error(w, "Не удалось выполнить декодирование ответа", http.StatusInternalServerError)
+		return
+	}
+
+	msg, err := h.nc.Request("orders", data, nats.DefaultTimeout)
+	if err != nil {
+		slog.Error("Ошибка при запросе NATS", data)
+		http.Error(w, "Не удалось получить сообщение", http.StatusInternalServerError)
+		return
+	}
+	var message models.Order
+	if err := json.Unmarshal(msg.Data, &message); err != nil {
+		slog.Error("Ошибка декодирования ответа NATS", "error", err)
+		http.Error(w, "Не удалось декодировать ответ", http.StatusInternalServerError)
+		return
+	}
+
+	cache.SetOrder(message)
+	slog.Info("Кэш успешно обновлён", "id", message.OrderUID, "data", message)
+
+	response := msg.Data
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(response)
+}
+
+func (h *Handler) getOrderByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	req := chi.URLParam(r, "id")
@@ -45,6 +85,8 @@ func (h *Handler) getMessageByID(w http.ResponseWriter, r *http.Request) {
 
 	data, exists := cache.StorageMap[id]
 	if exists {
+		fmt.Println("qwe")
+
 		json.NewEncoder(w).Encode(data)
 		return
 	}
@@ -70,56 +112,15 @@ func (h *Handler) getMessageByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cache.SetMessage(message)
+	cache.SetOrder(message)
 
 	response, err := json.Marshal(message)
 	if err != nil {
-		slog.Error("getMessageByID: json.Marshal")
+		slog.Error("getOrderByID: json.Marshal")
 		http.Error(w, "Не удалось выполнить декодирование ответа", http.StatusInternalServerError)
 		return
 	}
 
 	slog.Info("Данные успешно загружены и добавлены в кэш", "id", message.OrderUID, "data", message)
-	w.Write(response)
-}
-
-func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	var request models.Order
-
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		slog.Error("Ошибка декодирования JSON", "error", err)
-		http.Error(w, "Invalid request payload", http.StatusBadRequest)
-		return
-	}
-
-	data, err := json.Marshal(request)
-	if err != nil {
-		slog.Error("getMessageByID: json.Marshal")
-		http.Error(w, "Не удалось выполнить декодирование ответа", http.StatusInternalServerError)
-		return
-	}
-
-	msg, err := h.nc.Request("orders", data, nats.DefaultTimeout)
-	if err != nil {
-		slog.Error("Ошибка при запросе NATS", data)
-		http.Error(w, "Не удалось получить сообщение", http.StatusInternalServerError)
-		return
-	}
-
-	var message models.Order
-	if err := json.Unmarshal(msg.Data, &message); err != nil {
-		slog.Error("Ошибка декодирования ответа NATS", "error", err)
-		http.Error(w, "Не удалось декодировать ответ", http.StatusInternalServerError)
-		return
-	}
-
-	cache.SetMessage(message)
-	slog.Info("Кэш успешно обновлён", "id", message.OrderUID, "data", message)
-
-	response := msg.Data
-
-	w.WriteHeader(http.StatusOK)
 	w.Write(response)
 }

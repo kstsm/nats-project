@@ -1,5 +1,4 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-message";
-SET TIME ZONE 'Europe/Moscow';
 
 CREATE TABLE orders
 (
@@ -36,7 +35,6 @@ CREATE TABLE payment
     id            SERIAL PRIMARY KEY,                                   -- Уникальный идентификатор платежа
     order_uid     UUID REFERENCES orders (order_uid) ON DELETE CASCADE, -- Связь с заказом
     transaction   VARCHAR(50)    NOT NULL,                              -- Идентификатор транзакции
-    request_id    VARCHAR(50),                                          -- Идентификатор запроса (может быть пустым)
     currency      VARCHAR(10)    NOT NULL,                              -- Валюта платежа
     provider      VARCHAR(50)    NOT NULL,                              -- Платежный провайдер
     amount        NUMERIC(10, 2) NOT NULL,                              -- Сумма платежа
