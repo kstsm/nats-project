@@ -6,76 +6,69 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gookit/slog"
-	"github.com/jackc/pgx/v5"
+	"github.com/kstsm/nats-projetn/subscriber/internal/helper"
 	"github.com/kstsm/nats-projetn/subscriber/internal/models"
-	"github.com/kstsm/nats-projetn/subscriber/internal/models/queries"
-	"github.com/nats-io/nats.go"
+	"github.com/kstsm/nats-projetn/subscriber/internal/repository"
 	"net/http"
 )
 
+type HandlerI interface {
+	GetAllOrders(w http.ResponseWriter, r *http.Request)
+	GetOrderByID(w http.ResponseWriter, r *http.Request)
+	GetRouter() *chi.Mux
+}
+
 type Handler struct {
-	nc     *nats.Conn
-	db     *pgx.Conn
+	//nc     *nats.Conn
+	repo   repository.RepositoryI
 	Router *chi.Mux
 }
 
-func NewHandler(nc *nats.Conn, db *pgx.Conn) *Handler {
+func NewHandler(repository repository.RepositoryI) HandlerI {
 	h := &Handler{
-		nc:     nc,
-		db:     db,
+		//nc:     nc,
+		repo:   repository,
 		Router: chi.NewRouter(),
 	}
 
 	h.Router.Use(middleware.Logger)
 	h.Router.Get("/messages", h.GetAllOrders)
-	h.Router.Get("/message/{id}", h.getOrderByID)
+	h.Router.Get("/message/{id}", h.GetOrderByID)
 
 	return h
 }
 
-func (h *Handler) GetAllOrders(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	ctx := context.Background()
-	var orders []models.Order
-	var bytes []byte
-
-	err := h.db.QueryRow(ctx, queries.GetAllOrders).Scan(&bytes)
-	if err != nil {
-		http.Error(w, "Не удалось выполнить запрос к базе данных", http.StatusInternalServerError)
-		slog.Error("Ошибка выполнения запроса", err)
-		return
-	}
-
-	err = json.Unmarshal(bytes, &orders)
-	if err != nil {
-		http.Error(w, "Не удалось выполнить запрос к базе данных", http.StatusInternalServerError)
-		slog.Error("Ошибка выполнения запроса", err)
-		return
-	}
-
-	if err = json.NewEncoder(w).Encode(orders); err != nil {
-		http.Error(w, "Ошибка при кодировании JSON", http.StatusInternalServerError)
-		slog.Error("Ошибка JSON кодирования", err)
-	}
+func (h *Handler) GetRouter() *chi.Mux {
+	return h.Router
 }
 
-func (h *Handler) getOrderByID(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application-json")
+func (h *Handler) GetAllOrders(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	id := chi.URLParam(r, "id")
-
-	ctx := context.Background()
-	var order models.Order
-	var bytes []byte
-
-	err := h.db.QueryRow(ctx, queries.GetOrderByID, id).Scan(&bytes)
+	orders, err := h.repo.GetAllOrders(ctx)
 	if err != nil {
 		http.Error(w, "Не удалось выполнить запрос к базе данных", http.StatusInternalServerError)
 		slog.Error("Ошибка выполнения запроса", err)
 		return
 	}
 
+	helper.ResponseJson(w, http.StatusOK, orders)
+}
+
+func (h *Handler) GetOrderByID(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	bytes, err := h.repo.GetOrderByID(ctx, id)
+	if err != nil {
+		http.Error(w, "Не удалось выполнить запрос к базе данных", http.StatusInternalServerError)
+		slog.Error("Ошибка выполнения запроса", err)
+		return
+	}
+
+	var order models.Order
 	err = json.Unmarshal(bytes, &order)
 	if err != nil {
 		http.Error(w, "Не удалось выполнить запрос к базе данных", http.StatusInternalServerError)
@@ -83,8 +76,5 @@ func (h *Handler) getOrderByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err = json.NewEncoder(w).Encode(order); err != nil {
-		http.Error(w, "Ошибка при кодировании JSON", http.StatusInternalServerError)
-		slog.Error("Ошибка JSON кодирования", err)
-	}
+	helper.ResponseJson(w, http.StatusOK, order)
 }

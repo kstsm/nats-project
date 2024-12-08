@@ -2,25 +2,81 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/gookit/slog"
 	"github.com/jackc/pgx/v5"
 	"github.com/kstsm/nats-projetn/subscriber/internal/models"
 	"github.com/kstsm/nats-projetn/subscriber/internal/models/queries"
+	"os"
 )
 
-func SaveMessageToDB(db *pgx.Conn, message models.Order) (models.Order, error) {
+type RepositoryI interface {
+	GetAllOrders(ctx context.Context) ([]models.Order, error)
+	GetOrderByID(ctx context.Context, id string) ([]byte, error)
+	SaveMessageToDB(ctx context.Context, message models.Order) (models.Order, error)
+}
+
+type Repository struct {
+	db *pgx.Conn
+}
+
+func NewRepository() RepositoryI {
+	r := &Repository{
+		db: initPostgres(),
+	}
+
+	return r
+}
+
+func initPostgres() *pgx.Conn {
+	db, err := pgx.Connect(context.Background(), "postgres://admin:admin@localhost:5432/message_db")
+	if err != nil {
+		slog.Fatal("Не удалось подключиться к Postgres", err)
+		os.Exit(1)
+	}
+
+	return db
+}
+
+func (r *Repository) GetAllOrders(ctx context.Context) ([]models.Order, error) {
+	var bytes []byte
+
+	err := r.db.QueryRow(ctx, queries.GetAllOrders).Scan(&bytes)
+	if err != nil {
+		slog.Error("Ошибка выполнения запроса", err)
+		return nil, err
+	}
+
+	var orders []models.Order
+	err = json.Unmarshal(bytes, &orders)
+	if err != nil {
+		slog.Error("Ошибка выполнения запроса", err)
+		return nil, err
+	}
+
+	return orders, nil
+}
+
+func (r *Repository) GetOrderByID(ctx context.Context, id string) ([]byte, error) {
+	var bytes []byte
+
+	err := r.db.QueryRow(ctx, queries.GetOrderByID, id).Scan(&bytes)
+	if err != nil {
+		slog.Error("Ошибка выполнения запроса", err)
+		return nil, err
+	}
+
+	return bytes, err
+}
+
+func (r *Repository) SaveMessageToDB(ctx context.Context, message models.Order) (models.Order, error) {
 	var msg models.Order
 
-	tx, err := db.Begin(context.Background())
+	tx, err := r.db.Begin(context.Background())
 	if err != nil {
 		slog.Error("Ошибка при начале транзакции:", err)
 		return models.Order{}, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback(context.Background())
-		}
-	}()
 
 	err = tx.QueryRow(
 		context.Background(),
@@ -34,6 +90,11 @@ func SaveMessageToDB(db *pgx.Conn, message models.Order) (models.Order, error) {
 		&msg.ShardKey, &msg.SmID, &msg.DateCreated, &msg.OofShard,
 	)
 	if err != nil {
+		if err = tx.Rollback(context.Background()); err != nil {
+			slog.Error("Rollback: Ошибка при сохранении сообщения в таблицу orders:", err)
+			return models.Order{}, err
+		}
+
 		slog.Error("Ошибка при сохранении сообщения в таблицу orders:", err)
 		return models.Order{}, err
 	}
@@ -49,6 +110,11 @@ func SaveMessageToDB(db *pgx.Conn, message models.Order) (models.Order, error) {
 		&msg.Delivery.Address, &msg.Delivery.Region, &msg.Delivery.Email,
 	)
 	if err != nil {
+		if err = tx.Rollback(context.Background()); err != nil {
+			slog.Error("Rollback: Ошибка при сохранении сообщения в таблицу delivery:", err)
+			return models.Order{}, err
+		}
+
 		slog.Error("Ошибка при сохранении сообщения в таблицу delivery:", err)
 		return models.Order{}, err
 	}
@@ -66,6 +132,11 @@ func SaveMessageToDB(db *pgx.Conn, message models.Order) (models.Order, error) {
 		&msg.Payment.Bank, &msg.Payment.DeliveryCost, &msg.Payment.GoodsTotal,
 		&msg.Payment.CustomFee)
 	if err != nil {
+		if err = tx.Rollback(context.Background()); err != nil {
+			slog.Error("Rollback: Ошибка при сохранении сообщения в таблицу payment:", err)
+			return models.Order{}, err
+		}
+
 		slog.Error("Ошибка при сохранении сообщения в таблицу payment:", err)
 		return models.Order{}, err
 	}
@@ -81,6 +152,11 @@ func SaveMessageToDB(db *pgx.Conn, message models.Order) (models.Order, error) {
 			&item.Sale, &item.Size, &item.TotalPrice, &item.NMID, &item.Brand, &item.Status,
 		)
 		if err != nil {
+			if err = tx.Rollback(context.Background()); err != nil {
+				slog.Error("Rollback: Ошибка при сохранении сообщения в таблицу items:", err)
+				return models.Order{}, err
+			}
+
 			slog.Error("Ошибка при сохранении сообщения в таблицу items:", err)
 			return models.Order{}, err
 		}

@@ -13,12 +13,22 @@ import (
 	"net/http"
 )
 
+type HandlerI interface {
+	saveOrder(w http.ResponseWriter, r *http.Request)
+	getOrderByID(w http.ResponseWriter, r *http.Request)
+	GetRouter() *chi.Mux
+}
+
 type Handler struct {
 	nc     *nats.Conn
 	Router *chi.Mux
 }
 
-func NewHandler(nc *nats.Conn) *Handler {
+func (h *Handler) GetRouter() *chi.Mux {
+	return h.Router
+}
+
+func NewHandler(nc *nats.Conn) HandlerI {
 	h := &Handler{
 		nc:     nc,
 		Router: chi.NewRouter(),

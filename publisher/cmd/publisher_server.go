@@ -40,7 +40,7 @@ func Run() {
 
 	srv := http.Server{
 		Addr:    ":8000",
-		Handler: router.Router,
+		Handler: router.GetRouter(),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
